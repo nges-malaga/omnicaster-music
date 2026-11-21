@@ -7,7 +7,7 @@ import {
   aviso, borrarLista, desactivarCanciones, formatoBytes, formatoDuracionTotal, guardarSinConexion, liberarEspacio, listaBorrable, mandarARevision, navegar, normalizar,
   poner, refrescarSinConexion, reproducirLista, useApp, type Ruta,
 } from '../store'
-import { aCancion, oc } from '../oc'
+import { aCancion, oc, ordenarPorAlta, type OrdenLista } from '../oc'
 import type { Album, Cancion, Lista } from '../types'
 
 const semilla = Math.random()
@@ -251,7 +251,12 @@ export function PaginaLista({ id }: { id: string }) {
   const lista = useApp((s) => s.listas.find((l) => l.id === id))
   const rol = useApp((s) => s.rol)
   const idx = useApp((s) => s.idx)
-  const canciones = useMemo(() => (lista?.canciones ?? []).map((i) => idx.cancion.get(i)).filter((c): c is Cancion => !!c), [lista, idx])
+  // Orden recordado entre listas: el de la lista o por fecha de alta en la biblioteca.
+  const [orden, setOrden] = useState<OrdenLista>(() => {
+    try { const v = localStorage.getItem('omnicaster.ordenLista'); return v === 'recientes' || v === 'antiguas' ? v : 'lista' } catch { return 'lista' }
+  })
+  const elegirOrden = (v: OrdenLista) => { setOrden(v); try { localStorage.setItem('omnicaster.ordenLista', v) } catch { /* sin almacenamiento */ } }
+  const canciones = useMemo(() => ordenarPorAlta((lista?.canciones ?? []).map((i) => idx.cancion.get(i)).filter((c): c is Cancion => !!c), orden), [lista, idx, orden])
   if (!lista) return <p className="vacio">La lista ya no existe.</p>
   const ids = canciones.map((c) => c.id)
   const borrable = listaBorrable(lista, rol) && lista.grupo !== 'emision'
@@ -259,6 +264,11 @@ export function PaginaLista({ id }: { id: string }) {
     <>
       <Cabecera titulo={lista.nombre} sub={`${lista.grupo === 'emision' ? 'Emisión · solo lectura · ' : ''}${canciones.length} canciones · ${formatoDuracionTotal(canciones.reduce((t, c) => t + c.duracion, 0))}`}>
         <BotonesReproducir ids={ids} onGuardar={() => void guardarSinConexion(ids)} />
+        <label className="orden">Ordenar por
+          <select value={orden} onChange={(e) => elegirOrden(e.target.value as OrdenLista)} aria-label="Orden de la lista">
+            <option value="lista">Orden de la lista</option><option value="recientes">Añadidas recientemente</option><option value="antiguas">Añadidas hace más tiempo</option>
+          </select>
+        </label>
         {borrable && (
           <button className="boton peligro" onClick={() => {
             const aviso_ = lista.servidorId ? `¿Eliminar la lista «${lista.nombre}»? Va a la papelera de la nube (30 días); las canciones no se borran.` : `¿Eliminar la lista «${lista.nombre}»?`

@@ -156,6 +156,7 @@ fn a_fila(s: &Song) -> Option<CancionFila> {
         caratula: s.cover_art.clone(),
         formato: s.suffix.clone(),
         ganancia_db: s.replay_gain.as_ref().and_then(|r| r.track_gain),
+        alta: s.created.clone(),
     })
 }
 

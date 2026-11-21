@@ -164,6 +164,8 @@ pub struct Song {
     #[serde(deserialize_with = "flex_u64")]
     pub size: Option<u64>,
     pub replay_gain: Option<ReplayGain>,
+    /// Alta en la biblioteca (ISO 8601). OmniCaster Cloud manda la fecha en que entró la canción.
+    pub created: Option<String>,
     /// OpenSubsonic: «artista del álbum» tal como lo muestra el servidor.
     pub display_album_artist: Option<String>,
     /// OpenSubsonic: lista de artistas del álbum (el primero es el principal).

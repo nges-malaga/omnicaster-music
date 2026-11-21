@@ -53,6 +53,20 @@ export async function cargarFicha(id: string): Promise<Ficha> {
 }
 
 /** Energía como ●●●○○ (0 = sin dato). */
+/**
+ * Orden de una lista: el suyo, o por fecha de alta en la biblioteca. Las que no tienen fecha (o la de 1970)
+ * van al final y, entre iguales, se respeta el orden de la lista.
+ */
+export type OrdenLista = 'lista' | 'recientes' | 'antiguas'
+export function ordenarPorAlta<T extends { alta?: string | null }>(canciones: T[], orden: OrdenLista): T[] {
+  if (orden === 'lista') return canciones
+  const t = (c: T) => { const ms = c.alta ? Date.parse(c.alta) : NaN; return Number.isFinite(ms) && ms > 86_400_000 ? ms : 0 }
+  const dir = orden === 'recientes' ? -1 : 1
+  return canciones.map((c, i) => ({ c, i, t: t(c) }))
+    .sort((a, b) => (!a.t !== !b.t ? (a.t ? -1 : 1) : (a.t - b.t) * dir || a.i - b.i))
+    .map((x) => x.c)
+}
+
 export const energiaPuntos = (n: number) => (n > 0 ? '●'.repeat(n) + '○'.repeat(5 - n) : '—')
 
 export function aCancion(s: any): Cancion {
@@ -60,7 +74,7 @@ export function aCancion(s: any): Cancion {
     id: String(s.id), titulo: s.title || 'Sin título', artista: s.artist || 'Artista desconocido', artistaId: s.artistId ? String(s.artistId) : null,
     album: s.album || 'Álbum desconocido', albumId: s.albumId ? String(s.albumId) : null, pista: num(s.track), disco: num(s.discNumber),
     anio: num(s.year), genero: s.genre ?? null, duracion: num(s.duration) ?? 0, caratula: s.coverArt ? String(s.coverArt) : null,
-    formato: s.suffix ?? null, gananciaDb: null,
+    formato: s.suffix ?? null, gananciaDb: null, alta: s.created ?? null,
   }
 }
 

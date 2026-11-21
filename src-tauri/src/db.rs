@@ -54,6 +54,8 @@ pub struct CancionFila {
     pub caratula: Option<String>,
     pub formato: Option<String>,
     pub ganancia_db: Option<f32>,
+    /// Alta en la biblioteca (ISO 8601), para ordenar por fecha de inclusión
+    pub alta: Option<String>,
 }
 
 pub fn abrir(ruta: &Path) -> rusqlite::Result<Connection> {
@@ -70,11 +72,17 @@ pub fn iniciar(c: &Connection) -> rusqlite::Result<()> {
             anio INTEGER, genero TEXT, caratula TEXT, canciones INTEGER NOT NULL DEFAULT 0, duracion INTEGER NOT NULL DEFAULT 0, creado TEXT);
          CREATE TABLE IF NOT EXISTS canciones(id TEXT PRIMARY KEY, titulo TEXT NOT NULL, artista TEXT NOT NULL, artista_id TEXT,
             album TEXT NOT NULL, album_id TEXT, pista INTEGER, disco INTEGER, anio INTEGER, genero TEXT, duracion INTEGER NOT NULL DEFAULT 0,
-            caratula TEXT, formato TEXT, ganancia_db REAL);
+            caratula TEXT, formato TEXT, ganancia_db REAL, alta TEXT);
          CREATE INDEX IF NOT EXISTS idx_canciones_album ON canciones(album_id);
          CREATE TABLE IF NOT EXISTS kv(clave TEXT PRIMARY KEY, valor TEXT NOT NULL);
          CREATE TABLE IF NOT EXISTS sin_conexion(cancion_id TEXT PRIMARY KEY, ruta TEXT NOT NULL, tam INTEGER NOT NULL DEFAULT 0);",
-    )
+    )?;
+    // Bibliotecas de antes de la fecha de alta: la columna se añade (la llena la próxima sincronización).
+    let tiene_alta = c.prepare("SELECT alta FROM canciones LIMIT 0").is_ok();
+    if !tiene_alta {
+        c.execute_batch("ALTER TABLE canciones ADD COLUMN alta TEXT;")?;
+    }
+    Ok(())
 }
 
 fn texto(o: &Option<String>, defecto: &str) -> String {
@@ -108,7 +116,7 @@ pub fn reemplazar_biblioteca(c: &mut Connection, artistas: &[Artist], albumes: &
                 ])?;
             }
         }
-        let mut st = tx.prepare("INSERT OR REPLACE INTO canciones VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)")?;
+        let mut st = tx.prepare("INSERT OR REPLACE INTO canciones VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)")?;
         for s in canciones {
             if let Some(id) = &s.id {
                 st.execute(params![
@@ -125,7 +133,8 @@ pub fn reemplazar_biblioteca(c: &mut Connection, artistas: &[Artist], albumes: &
                     s.duration.unwrap_or(0),
                     s.cover_art,
                     s.suffix,
-                    s.replay_gain.as_ref().and_then(|r| r.track_gain)
+                    s.replay_gain.as_ref().and_then(|r| r.track_gain),
+                    s.created
                 ])?;
             }
         }
@@ -164,7 +173,7 @@ pub fn cargar_biblioteca(c: &Connection) -> rusqlite::Result<Biblioteca> {
         })?
         .collect::<Result<Vec<_>, _>>()?;
     let canciones = c
-        .prepare("SELECT id,titulo,artista,artista_id,album,album_id,pista,disco,anio,genero,duracion,caratula,formato,ganancia_db FROM canciones")?
+        .prepare("SELECT id,titulo,artista,artista_id,album,album_id,pista,disco,anio,genero,duracion,caratula,formato,ganancia_db,alta FROM canciones")?
         .query_map([], |r| {
             Ok(CancionFila {
                 id: r.get(0)?,
@@ -181,6 +190,7 @@ pub fn cargar_biblioteca(c: &Connection) -> rusqlite::Result<Biblioteca> {
                 caratula: r.get(11)?,
                 formato: r.get(12)?,
                 ganancia_db: r.get::<_, Option<f64>>(13)?.map(|g| g as f32),
+                alta: r.get(14)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -247,6 +257,25 @@ mod tests {
         assert_eq!(b.canciones[0].pista, None);
         assert_eq!(b.albumes[0].nombre, "Álbum sin título");
         assert!(b.sincronizada.is_some());
+    }
+
+    #[test]
+    fn fecha_de_alta_y_biblioteca_antigua() {
+        // Base de una versión anterior: canciones sin la columna «alta».
+        let mut c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE canciones(id TEXT PRIMARY KEY, titulo TEXT NOT NULL, artista TEXT NOT NULL, artista_id TEXT,
+                album TEXT NOT NULL, album_id TEXT, pista INTEGER, disco INTEGER, anio INTEGER, genero TEXT, duracion INTEGER NOT NULL DEFAULT 0,
+                caratula TEXT, formato TEXT, ganancia_db REAL);
+             INSERT INTO canciones (id, titulo, artista, album) VALUES ('viejo', 'T', 'A', 'B');",
+        )
+        .unwrap();
+        iniciar(&c).unwrap();
+        iniciar(&c).unwrap(); // dos veces: no falla
+        assert_eq!(cargar_biblioteca(&c).unwrap().canciones[0].alta, None);
+        let s = Song { id: Some("1".into()), created: Some("2026-11-21T10:00:00.000Z".into()), ..Default::default() };
+        reemplazar_biblioteca(&mut c, &[], &[], &[s]).unwrap();
+        assert_eq!(cargar_biblioteca(&c).unwrap().canciones[0].alta.as_deref(), Some("2026-11-21T10:00:00.000Z"));
     }
 
     #[test]

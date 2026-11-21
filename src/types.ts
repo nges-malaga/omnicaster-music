@@ -7,6 +7,8 @@ export interface Cancion {
   id: string; titulo: string; artista: string; artistaId?: string | null; album: string; albumId?: string | null
   pista?: number | null; disco?: number | null; anio?: number | null; genero?: string | null; duracion: number
   caratula?: string | null; formato?: string | null; gananciaDb?: number | null
+  /** Alta en la biblioteca (ISO 8601), para ordenar por fecha de inclusión */
+  alta?: string | null
 }
 export interface Biblioteca { artistas: Artista[]; albumes: Album[]; canciones: Cancion[]; sincronizada?: number | null }
 export interface InfoServidor { version: string; serverType?: string | null; serverVersion?: string | null; openSubsonic: boolean }
