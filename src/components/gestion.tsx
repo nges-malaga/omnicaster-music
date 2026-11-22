@@ -1,6 +1,7 @@
 // Diálogos de gestión de la biblioteca: ficha, edición de datos, confirmación de cambios masivos y subida.
 import { useEffect, useState } from 'react'
-import { ETIQUETA_ROL, cargarFicha, energiaPuntos, oc, puede, type Ficha } from '../oc'
+import { ETIQUETA_ROL, cargarFicha, energiaPuntos, nombreTipoMedio, oc, puede, type Ficha } from '../oc'
+import { nombreIdioma, opcionesIdioma } from '../idiomas'
 import { aviso, deshacerCambio, editarCanciones, obtener, poner, useApp } from '../store'
 
 const FICHA_VACIA: Ficha | null = null
@@ -29,6 +30,7 @@ const NOMBRE_OP: Record<string, string> = { edit: 'Editada', create: 'Creada', d
 export function FichaCancion() {
   const id = useApp((s) => s.ficha)
   const rol = useApp((s) => s.rol)
+  const tipos = useApp((s) => s.tipos)
   const [f, setF] = useState<Ficha | null>(FICHA_VACIA)
   const [error, setError] = useState('')
   const [hist, setHist] = useState<Entrada[]>([])
@@ -51,12 +53,12 @@ export function FichaCancion() {
             <dt>Artista</dt><dd>{f.artista}</dd>
             <dt>Álbum</dt><dd>{f.album || '—'}{f.artistaAlbum && f.artistaAlbum !== f.artista ? ` · ${f.artistaAlbum}` : ''}</dd>
             <dt>Año · estilo</dt><dd>{[f.anio, f.genero].filter(Boolean).join(' · ') || '—'}</dd>
-            <dt>Idioma</dt><dd>{f.idioma || '—'}</dd>
+            <dt>Idioma</dt><dd>{nombreIdioma(f.idioma)}</dd>
             <dt>Energía</dt><dd aria-label={`Energía ${f.energia} de 5`}><span className="energia">{energiaPuntos(f.energia)}</span></dd>
             <dt>Mood</dt><dd>{f.mood || '—'}</dd>
             <dt>Temas</dt><dd>{f.temas.join(', ') || '—'}</dd>
             <dt>Etiquetas</dt><dd>{f.etiquetas.join(', ') || '—'}</dd>
-            {f.tipoMedio && <><dt>Tipo de medio</dt><dd>{f.tipoMedio}</dd></>}
+            <dt>Tipo de medio</dt><dd>{nombreTipoMedio(f.tipoMedio, tipos)}</dd>
             {f.desactivada && <><dt>Estado</dt><dd>Desactivada</dd></>}
           </dl>
           {hist.length > 0 && (
@@ -85,11 +87,15 @@ export function FichaCancion() {
 
 const CAMPOS_TEXTO: [string, string][] = [
   ['title', 'Título'], ['artist', 'Artista'], ['album', 'Álbum'], ['albumArtist', 'Artista del álbum'], ['year', 'Año'], ['genre', 'Estilo'],
-  ['language', 'Idioma (es, en…)'], ['mood', 'Mood'],
+  ['mood', 'Mood'],
 ]
+
+/** Valor del desplegable de una edición múltiple mientras no se ha tocado. */
+const SIN_CAMBIOS = '__sin_cambios__'
 
 export function EditarDatos() {
   const ids = useApp((s) => s.editar)
+  const tipos = useApp((s) => s.tipos)
   const [f, setF] = useState<Ficha | null>(null)
   const [t, setT] = useState<Record<string, string>>({})
   const [sucios, setSucios] = useState<Set<string>>(new Set())
@@ -101,13 +107,18 @@ export function EditarDatos() {
     if (ids?.length === 1) {
       cargarFicha(ids[0]).then((x) => {
         setF(x)
-        setT({ title: x.titulo, artist: x.artista, album: x.album, albumArtist: x.artistaAlbum, year: x.anio, genre: x.genero, language: x.idioma, mood: x.mood, tags: x.etiquetas.join(', '), themes: x.temas.join(', '), mediaType: x.tipoMedio, energy: String(x.energia) })
+        setT({ title: x.titulo, artist: x.artista, album: x.album, albumArtist: x.artistaAlbum, year: x.anio, genre: x.genero, language: x.idioma, mood: x.mood, tags: x.etiquetas.join(', '), themes: x.temas.join(', '), mediaType: x.tipoMedio === 'music' ? '' : x.tipoMedio, energy: String(x.energia) })
       }).catch((e) => setError(String(e?.message ?? e)))
     }
   }, [ids])
   if (!ids) return null
   const cerrar = () => poner({ editar: null })
-  const cambiar = (k: string, v: string) => { setT((p) => ({ ...p, [k]: v })); setSucios((p) => new Set(p).add(k)) }
+  const cambiar = (k: string, v: string) => {
+    setT((p) => ({ ...p, [k]: v }))
+    setSucios((p) => { const n = new Set(p); if (v === SIN_CAMBIOS) n.delete(k); else n.add(k); return n })
+  }
+  // En una edición múltiple, los desplegables empiezan en «Sin cambios».
+  const valorSel = (k: string) => (varias && !sucios.has(k) ? SIN_CAMBIOS : (t[k] ?? ''))
   const lista = (v: string) => v.split(',').map((x) => x.trim()).filter(Boolean)
   const guardar = async (ev: React.FormEvent) => {
     ev.preventDefault()
@@ -118,7 +129,7 @@ export function EditarDatos() {
       else set[k] = t[k] ?? ''
     }
     if (!Object.keys(set).length) return cerrar()
-    if ('mediaType' in set && set.mediaType && set.mediaType !== 'music' && !window.confirm('Los tipos de medio distintos de música (jingle, programa, podcast, cuña…) dejan de salir en OmniCaster Music. ¿Continuar?')) return
+    if ('mediaType' in set && set.mediaType && set.mediaType !== 'music' && !window.confirm('Lo que no es música (jingle, programa, podcast, cuña…) pasa a su apartado de «Medios» y deja de salir en la biblioteca de música. ¿Continuar?')) return
     setOcupado(true)
     try {
       await editarCanciones(ids, { set }) // si son más de 10 abre antes la confirmación explícita
@@ -137,6 +148,12 @@ export function EditarDatos() {
         <form onSubmit={guardar} className="form-edicion">
           {varias && <p className="nota">Solo se cambia lo que rellenes; lo demás queda como está. El título solo se edita canción a canción.</p>}
           {CAMPOS_TEXTO.filter(([k]) => !(varias && k === 'title')).map(([k, e]) => campo(k, e))}
+          <label className="campo">Idioma
+            <select value={valorSel('language')} onChange={(e) => cambiar('language', e.target.value)}>
+              {varias && <option value={SIN_CAMBIOS}>Sin cambios</option>}
+              {opcionesIdioma(varias ? '' : (f?.idioma ?? '')).map((o) => <option key={o.id || 'sin-indicar'} value={o.id}>{o.label}</option>)}
+            </select>
+          </label>
           <label className="campo">Energía
             <select value={t.energy ?? ''} onChange={(e) => cambiar('energy', e.target.value)}>
               {varias && <option value="">Sin cambios</option>}
@@ -146,7 +163,11 @@ export function EditarDatos() {
           {campo('themes', 'Temas (separados por comas)')}
           {campo('tags', 'Etiquetas (separadas por comas)')}
           <label className="campo">Tipo de medio
-            <input value={t.mediaType ?? ''} placeholder={varias ? 'Sin cambios' : 'Vacío = música'} onChange={(e) => cambiar('mediaType', e.target.value)} />
+            <select value={valorSel('mediaType')} onChange={(e) => cambiar('mediaType', e.target.value)}>
+              {varias && <option value={SIN_CAMBIOS}>Sin cambios</option>}
+              {[...tipos, ...(t.mediaType && !tipos.some((x) => x.id === t.mediaType) ? [{ id: t.mediaType, label: nombreTipoMedio(t.mediaType, tipos), inMusic: false }] : [])]
+                .map((x) => <option key={x.id || 'musica'} value={x.id}>{x.label}</option>)}
+            </select>
           </label>
           <div className="botones">
             <button type="button" className="boton" onClick={cerrar}>Cancelar</button>

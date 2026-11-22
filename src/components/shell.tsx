@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { backend } from '../backend'
-import { puede } from '../oc'
+import { ICONO_APARTADO, nombreApartado, puede } from '../oc'
 import { Caratula, ContextMenu, EnlaceAlbum, EnlaceArtista, Icono } from './common'
 import {
   alternarAleatorio, alternarFavorito, alternarPanelCola, alternarPausa, anterior, atras, aviso, buscar, buscarActualizaciones, cerrarSesion, ciclarRepetir, crearLista, crearListaServidor, formatoTiempo,
@@ -23,6 +23,7 @@ export function Lateral() {
   const sincronizando = useApp((s) => s.sincronizando)
   const hayPila = useApp((s) => s.pilaRutas.length > 0)
   const rol = useApp((s) => s.rol)
+  const medios = useApp((s) => s.medios)
   const act = (t: Ruta['t']) => ruta.t === t
   return (
     <aside className="lateral">
@@ -46,6 +47,12 @@ export function Lateral() {
         <Enlace ruta={{ t: 'listas' }} icono="list" texto="Listas" activo={act('listas') || act('lista')} />
         <Enlace ruta={{ t: 'favoritos' }} icono="heart" texto="Favoritos" activo={act('favoritos')} />
         <Enlace ruta={{ t: 'sinconexion' }} icono="download" texto="Sin conexión" activo={act('sinconexion')} />
+        {medios.length > 0 && (
+          <>
+            <h3>Medios</h3>
+            {medios.map((m) => <Enlace key={m.id} ruta={{ t: 'medio', id: m.id }} icono={ICONO_APARTADO[m.id] ?? 'album'} texto={nombreApartado(m)} activo={ruta.t === 'medio' && ruta.id === m.id} />)}
+          </>
+        )}
         {puede(rol, 'operator') && (
           <>
             <h3>Gestión</h3>

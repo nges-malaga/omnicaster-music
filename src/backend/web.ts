@@ -47,7 +47,7 @@ const aCancion = (s: any): Cancion => ({
   id: String(s.id), titulo: s.title || 'Sin título', artista: s.artist || 'Artista desconocido', artistaId: s.artistId ? String(s.artistId) : null,
   album: s.album || 'Álbum desconocido', albumId: s.albumId ? String(s.albumId) : null, pista: num(s.track), disco: num(s.discNumber),
   anio: num(s.year), genero: s.genre ?? null, duracion: num(s.duration) ?? 0, caratula: s.coverArt ? String(s.coverArt) : null,
-  formato: s.suffix ?? null, gananciaDb: num(s.replayGain?.trackGain), alta: s.created ?? null,
+  formato: s.suffix ?? null, gananciaDb: num(s.replayGain?.trackGain), alta: s.created ?? null, tipoMedio: s.ocMediaType ?? '',
 })
 const aAlbum = (a: any): Album => ({
   id: String(a.id), nombre: a.name || 'Álbum sin título', artista: a.artist || 'Artista desconocido', artistaId: a.artistId ? String(a.artistId) : null,
@@ -204,6 +204,7 @@ export const backendWeb: Backend = {
   },
   async elegirArchivos() { return [] },
   async subir() { throw 'Subir canciones solo está disponible en la aplicación de escritorio.' },
+  async subirImagen() { throw 'Subir imágenes solo está disponible en la aplicación de escritorio.' },
   onSubida() { return () => {} },
   async buscarActualizacion() { return null },
 }

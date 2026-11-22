@@ -3,11 +3,13 @@ import { backend } from '../backend'
 import {
   BotonesReproducir, Cabecera, Caratula, fondoGenerado, Icono, ListaCanciones, RejillaAlbumes, Seccion, TarjetaAlbum,
 } from '../components/common'
+import { EditorInteligente } from '../components/inteligentes'
+import { BotonPortada } from '../components/portada'
 import {
   aviso, borrarLista, desactivarCanciones, formatoBytes, formatoDuracionTotal, guardarSinConexion, liberarEspacio, listaBorrable, mandarARevision, navegar, normalizar,
-  poner, refrescarSinConexion, reproducirLista, useApp, type Ruta,
+  poner, refrescarSinConexion, registrarExtras, reproducirLista, useApp, type Ruta,
 } from '../store'
-import { aCancion, oc, ordenarPorAlta, type OrdenLista } from '../oc'
+import { aCancion, cancionesDeMedio, esOtroMedio, nombreApartado, oc, ordenarPorAlta, puede, type OrdenLista } from '../oc'
 import type { Album, Cancion, Lista } from '../types'
 
 const semilla = Math.random()
@@ -206,15 +208,17 @@ export function PaginaGenero({ nombre }: { nombre: string }) {
 
 function TarjetasListas({ listas }: { listas: Lista[] }) {
   const idx = useApp((s) => s.idx)
+  const inteligentes = useApp((s) => s.inteligentes)
   return (
     <div className="rejilla">
       {listas.map((l) => {
         const primera = l.canciones.map((i) => idx.cancion.get(i)).find((c) => c?.caratula)
+        const inteligente = !!l.servidorId && l.servidorId in inteligentes
         return (
           <button key={l.id} className="tarjeta" onClick={() => navegar({ t: 'lista', id: l.id })} aria-label={`Lista ${l.nombre}`}>
-            <Caratula id={primera?.caratula} tam={400} texto={l.nombre} />
+            <Caratula id={l.caratula ?? primera?.caratula} tam={400} texto={l.nombre} />
             <span className="t-nombre">{l.nombre}</span>
-            <span className="t-sub">{l.canciones.length} canciones</span>
+            <span className="t-sub">{l.canciones.length} canciones{inteligente ? ' · inteligente' : ''}</span>
           </button>
         )
       })}
@@ -224,12 +228,14 @@ function TarjetasListas({ listas }: { listas: Lista[] }) {
 
 export function Listas() {
   const listas = useApp((s) => s.listas)
+  const rol = useApp((s) => s.rol)
   const normales = listas.filter((l) => l.grupo !== 'emision')
   const emision = listas.filter((l) => l.grupo === 'emision')
   return (
     <>
       <Cabecera titulo="Listas" sub={`${normales.length} listas · ${emision.length} de emisión`}>
         <button className="boton principal" onClick={() => poner({ nuevaLista: [] })}><Icono n="plus" tam={18} /> Lista nueva</button>
+        {puede(rol, 'admin') && <button className="boton" onClick={() => navegar({ t: 'inteligente', id: 'nueva' })}><Icono n="sparkle" tam={18} /> Lista inteligente</button>}
       </Cabecera>
       <section className="grupo-listas" aria-label="Listas">
         <h2>Listas</h2>
@@ -251,6 +257,7 @@ export function PaginaLista({ id }: { id: string }) {
   const lista = useApp((s) => s.listas.find((l) => l.id === id))
   const rol = useApp((s) => s.rol)
   const idx = useApp((s) => s.idx)
+  const inteligente = useApp((s) => (lista?.servidorId ? s.inteligentes[lista.servidorId] : undefined))
   // Orden recordado entre listas: el de la lista o por fecha de alta en la biblioteca.
   const [orden, setOrden] = useState<OrdenLista>(() => {
     try { const v = localStorage.getItem('omnicaster.ordenLista'); return v === 'recientes' || v === 'antiguas' ? v : 'lista' } catch { return 'lista' }
@@ -260,24 +267,59 @@ export function PaginaLista({ id }: { id: string }) {
   if (!lista) return <p className="vacio">La lista ya no existe.</p>
   const ids = canciones.map((c) => c.id)
   const borrable = listaBorrable(lista, rol) && lista.grupo !== 'emision'
+  const primera = canciones.find((c) => c.caratula)
+  const duracion = formatoDuracionTotal(canciones.reduce((t, c) => t + c.duracion, 0))
   return (
     <>
-      <Cabecera titulo={lista.nombre} sub={`${lista.grupo === 'emision' ? 'Emisión · solo lectura · ' : ''}${canciones.length} canciones · ${formatoDuracionTotal(canciones.reduce((t, c) => t + c.duracion, 0))}`}>
-        <BotonesReproducir ids={ids} onGuardar={() => void guardarSinConexion(ids)} />
-        <label className="orden">Ordenar por
-          <select value={orden} onChange={(e) => elegirOrden(e.target.value as OrdenLista)} aria-label="Orden de la lista">
-            <option value="lista">Orden de la lista</option><option value="recientes">Añadidas recientemente</option><option value="antiguas">Añadidas hace más tiempo</option>
-          </select>
-        </label>
-        {borrable && (
-          <button className="boton peligro" onClick={() => {
-            const aviso_ = lista.servidorId ? `¿Eliminar la lista «${lista.nombre}»? Va a la papelera de la nube (30 días); las canciones no se borran.` : `¿Eliminar la lista «${lista.nombre}»?`
-            if (!window.confirm(aviso_)) return
-            borrarLista(lista.id); navegar({ t: 'listas' })
-          }}><Icono n="trash" tam={18} /> Eliminar lista</button>
-        )}
-      </Cabecera>
+      <div className="cabecera-album">
+        <Caratula id={lista.caratula ?? primera?.caratula} tam={600} texto={lista.nombre} clase="grande" />
+        <div className="info">
+          <h1>{lista.nombre}</h1>
+          <p className="sub">{`${lista.grupo === 'emision' ? 'Emisión · solo lectura · ' : ''}${canciones.length} canciones · ${duracion}`}</p>
+          {inteligente && <p className="sub"><Icono n="sparkle" tam={14} /> Lista inteligente: se actualiza sola. {inteligente.summary}</p>}
+          <BotonesReproducir ids={ids} onGuardar={() => void guardarSinConexion(ids)} />
+          <div className="botones">
+            <label className="orden">Ordenar por
+              <select value={orden} onChange={(e) => elegirOrden(e.target.value as OrdenLista)} aria-label="Orden de la lista">
+                <option value="lista">Orden de la lista</option><option value="recientes">Añadidas recientemente</option><option value="antiguas">Añadidas hace más tiempo</option>
+              </select>
+            </label>
+            {inteligente && puede(rol, 'admin') && <button className="boton" onClick={() => navegar({ t: 'inteligente', id: lista.servidorId! })}><Icono n="sparkle" tam={16} /> Editar reglas</button>}
+            {puede(rol, 'admin') && lista.servidorId?.startsWith('bl-') && <BotonPortada lista={lista} />}
+            {borrable && (
+              <button className="boton peligro" onClick={() => {
+                const aviso_ = lista.servidorId ? `¿Eliminar la lista «${lista.nombre}»? Va a la papelera de la nube (30 días); las canciones no se borran.` : `¿Eliminar la lista «${lista.nombre}»?`
+                if (!window.confirm(aviso_)) return
+                borrarLista(lista.id); navegar({ t: 'listas' })
+              }}><Icono n="trash" tam={18} /> Eliminar lista</button>
+            )}
+          </div>
+        </div>
+      </div>
       <ListaCanciones canciones={canciones} listaId={lista.id} onReproducir={(i) => reproducirLista(ids, i)} />
+    </>
+  )
+}
+
+/** Un apartado de otros medios: los jingles, las cuñas, los programas… de la emisora. */
+export function PaginaMedio({ id }: { id: string }) {
+  const apartado = useApp((s) => s.medios.find((m) => m.id === id))
+  const [canciones, setCanciones] = useState<Cancion[] | null>(null)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    setCanciones(null); setError('')
+    cancionesDeMedio(id).then((l) => { registrarExtras(l); setCanciones(l) }).catch((e) => setError(String(e?.message ?? e)))
+  }, [id])
+  const titulo = nombreApartado(apartado ?? { id, label: id })
+  const ids = (canciones ?? []).map((c) => c.id)
+  return (
+    <>
+      <Cabecera titulo={titulo} sub={canciones ? `${canciones.length} ${canciones.length === 1 ? 'elemento' : 'elementos'} · ${formatoDuracionTotal(canciones.reduce((t, c) => t + c.duracion, 0))}` : ''}>
+        <BotonesReproducir ids={ids} />
+      </Cabecera>
+      {error && <p className="error">{error}</p>}
+      {canciones && !canciones.length && <p className="vacio">No hay nada de este tipo.</p>}
+      {canciones && canciones.length > 0 && <ListaCanciones canciones={canciones} mostrarAlbum={false} onReproducir={(i) => reproducirLista(ids, i)} />}
     </>
   )
 }
@@ -404,6 +446,25 @@ export function PaginaArtista({ id }: { id: string }) {
 export function Busqueda() {
   const q = useApp((s) => s.busqueda)
   const bib = useApp((s) => s.bib)
+  const idx = useApp((s) => s.idx)
+  // Los jingles, cuñas y programas no están en la biblioteca de música: se buscan en la nube.
+  const [otros, setOtros] = useState<Cancion[]>([])
+  useEffect(() => {
+    const t = q.trim()
+    if (!t) { setOtros([]); return }
+    let vigente = true
+    const espera = setTimeout(() => {
+      oc('search3', { query: t, artistCount: 0, albumCount: 0, songCount: 50 })
+        .then((b) => {
+          if (!vigente) return
+          const l = ((b.searchResult3?.song ?? []) as unknown[]).map(aCancion).filter(esOtroMedio)
+          registrarExtras(l)
+          setOtros(l)
+        })
+        .catch(() => vigente && setOtros([]))
+    }, 300)
+    return () => { vigente = false; clearTimeout(espera) }
+  }, [q])
   const r = useMemo(() => {
     const t = normalizar(q.trim())
     if (!t) return null
@@ -415,8 +476,9 @@ export function Busqueda() {
     }
   }, [q, bib])
   if (!r) return <p className="vacio">Escribe para buscar en tu biblioteca.</p>
-  const nada = !r.artistas.length && !r.albumes.length && !r.canciones.length
+  const nada = !r.artistas.length && !r.albumes.length && !r.canciones.length && !otros.length
   const ids = r.canciones.map((c) => c.id)
+  const idsOtros = otros.map((c) => c.id).filter((i) => idx.cancion.has(i))
   return (
     <>
       <Cabecera titulo={`Resultados de «${q}»`} />
@@ -428,6 +490,7 @@ export function Busqueda() {
       )}
       {r.albumes.length > 0 && <Seccion titulo="Álbumes"><RejillaAlbumes albumes={r.albumes} /></Seccion>}
       {r.canciones.length > 0 && <Seccion titulo="Canciones"><ListaCanciones canciones={r.canciones} onReproducir={(i) => reproducirLista(ids, i)} /></Seccion>}
+      {otros.length > 0 && <Seccion titulo="Jingles, cuñas y programas"><ListaCanciones canciones={otros} mostrarAlbum={false} onReproducir={(i) => reproducirLista(idsOtros, i)} /></Seccion>}
     </>
   )
 }
@@ -447,6 +510,8 @@ export function Vista({ ruta }: { ruta: Ruta }) {
     case 'favoritos': return <Favoritos />
     case 'sinconexion': return <SinConexion />
     case 'busqueda': return <Busqueda />
+    case 'medio': return <PaginaMedio id={ruta.id} />
+    case 'inteligente': return <EditorInteligente id={ruta.id} />
     case 'album': return <PaginaAlbum id={ruta.id} />
     case 'artista': return <PaginaArtista id={ruta.id} />
     case 'genero': return <PaginaGenero nombre={ruta.id} />

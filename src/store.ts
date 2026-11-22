@@ -1,13 +1,16 @@
 // Estado global de la aplicación y lógica del reproductor (cola, historial, favoritos, listas…).
 import { useSyncExternalStore } from 'react'
 import { backend } from './backend'
-import { ErrorOc, LIMITE_MASIVO, oc, puede, rolDelUsuario } from './oc'
+import { ErrorOc, LIMITE_MASIVO, aCancion, apartadosDeMedios, oc, puede, rolDelUsuario, tiposDeMedio, TIPOS_MEDIO_SERIE, type ApartadoMedio, type TipoMedio } from './oc'
+import { olvidarSoportePortadas } from './portadas'
+import { idSubsonic, listasInteligentes, type ListaInteligente, type OpcionesInteligentes } from './inteligentes'
 import type { Album, Biblioteca, Cancion, ControlMedios, EventoAudio, Lista, PistaPeticion, ProgresoSubida, ResultadoSubida, Rol } from './types'
 
 export type Ruta =
   | { t: 'inicio' } | { t: 'explorar' } | { t: 'radio' } | { t: 'artistas' } | { t: 'albumes' } | { t: 'canciones' }
   | { t: 'generos' } | { t: 'listas' } | { t: 'favoritos' } | { t: 'sinconexion' } | { t: 'busqueda' }
   | { t: 'revision' } | { t: 'desactivadas' }
+  | { t: 'medio'; id: string } | { t: 'inteligente'; id: string }
   | { t: 'album'; id: string } | { t: 'artista'; id: string } | { t: 'genero'; id: string } | { t: 'lista'; id: string }
 
 export type Repetir = 'no' | 'cola' | 'una'
@@ -65,6 +68,15 @@ export interface Estado {
   confirmacion: { texto: string; n: number; ejecutar: (confirm: number) => Promise<void> } | null
   subida: { progreso: ProgresoSubida | null; resultado: ResultadoSubida | null; activa: boolean } | null
   actualizacion: { version: string; instalar: () => Promise<void> } | null
+  /** Apartados de otros medios (jingles, cuñas, programas…): no son música y no salen en la biblioteca */
+  medios: ApartadoMedio[]
+  /** Tipos de medio del estudio, para los desplegables */
+  tipos: TipoMedio[]
+  /** Canciones que no están en la biblioteca de música (jingles, cuñas…) pero salen en listas y búsquedas, por id */
+  extras: Record<string, Cancion>
+  /** Listas inteligentes por id de Subsonic («bl-…») */
+  inteligentes: Record<string, ListaInteligente>
+  opcionesInteligentes: OpcionesInteligentes | null
 }
 
 const vacia: Biblioteca = { artistas: [], albumes: [], canciones: [] }
@@ -94,6 +106,7 @@ let estado: Estado = {
   cola: [], indice: -1, actual: null, reproduciendo: false, posicion: 0, duracion: 0, volumen: 0.8, aleatorio: false, repetir: 'no',
   favoritos: [], historial: [], listas: [], sinConexion: {}, descarga: null, carpetaSinConexion: '',
   panelCola: true, pantallaCompleta: false, tema: 'sistema', avisos: [], menu: null, nuevaLista: null, rol: 'listener', ficha: null, editar: null, confirmacion: null, subida: null, actualizacion: null,
+  medios: [], tipos: TIPOS_MEDIO_SERIE, extras: {}, inteligentes: {}, opcionesInteligentes: null,
 }
 const oyentes = new Set<() => void>()
 
@@ -510,19 +523,66 @@ export async function liberarEspacio(ids?: string[]) {
 // ---------------------------------------------------------------- arranque y conexión
 
 function aplicarBiblioteca(b: Biblioteca) {
-  poner({ bib: b, idx: indexar(b) })
+  poner((s) => {
+    const idx = indexar(b)
+    // Lo que no es música sigue pudiéndose reproducir desde las listas y las búsquedas.
+    for (const c of Object.values(s.extras)) if (!idx.cancion.has(c.id)) idx.cancion.set(c.id, c)
+    return { bib: b, idx }
+  })
+}
+
+/** Da a conocer canciones que no están en la biblioteca de música (jingles, cuñas…) para poder mostrarlas y reproducirlas. */
+export function registrarExtras(canciones: Cancion[]) {
+  const nuevas = canciones.filter((c) => !estado.bib.canciones.length || !estado.idx.cancion.has(c.id) || estado.extras[c.id])
+  if (!nuevas.length) return
+  poner((s) => {
+    const cancion = new Map(s.idx.cancion)
+    const extras = { ...s.extras }
+    for (const c of nuevas) { cancion.set(c.id, c); extras[c.id] = c }
+    return { idx: { ...s.idx, cancion }, extras }
+  })
+}
+
+/** Apartados de otros medios y tipos de medio de la emisora. */
+export async function cargarMedios() {
+  const [medios, tipos] = await Promise.all([apartadosDeMedios(), tiposDeMedio()])
+  poner({ medios, tipos })
+}
+
+/** Listas inteligentes (solo las ven operarios y administradores). */
+export async function cargarInteligentes() {
+  if (!puede(estado.rol, 'operator')) return poner({ inteligentes: {}, opcionesInteligentes: null })
+  try {
+    const { listas, opciones } = await listasInteligentes()
+    poner({ inteligentes: Object.fromEntries(listas.map((l) => [idSubsonic(l.id), l])), opcionesInteligentes: opciones })
+  } catch { poner({ inteligentes: {}, opcionesInteligentes: null }) }
 }
 
 /** Las listas del servidor se vuelven a leer siempre (no son una copia): «Listas» (OmniCaster) y «Emisión». */
 export async function refrescarListasServidor() {
   try {
     const remotas = await backend.listasServidor()
+    // Carátula propia de cada lista (la nube la guarda en la ficha de la lista)
+    const info = new Map<string, { caratula: string | null; propia?: boolean }>()
+    try {
+      const b = await oc('getPlaylists')
+      for (const p of b.playlists?.playlist ?? []) info.set(String(p.id), { caratula: p.coverArt ? String(p.coverArt) : null, propia: typeof p.ocCoverOwn === 'boolean' ? p.ocCoverOwn : undefined })
+    } catch { /* sin carátulas propias */ }
     const nuevas: Lista[] = remotas.map((l) => {
       const emision = l.id.startsWith('pl-')
-      return { id: `s-${l.id}`, servidorId: l.id, nombre: emision ? l.nombre.replace(/^Emisión\s*[·:-]\s*/i, '') : l.nombre, canciones: l.canciones, grupo: emision ? 'emision' : 'lista' } as Lista
+      const i = info.get(l.id)
+      return {
+        id: `s-${l.id}`, servidorId: l.id, nombre: emision ? l.nombre.replace(/^Emisión\s*[·:-]\s*/i, '') : l.nombre, canciones: l.canciones, grupo: emision ? 'emision' : 'lista',
+        caratula: i?.caratula ?? null, ...(i?.propia !== undefined ? { portadaPropia: i.propia } : {}),
+      } as Lista
     })
     poner((s) => ({ listas: [...s.listas.filter((l) => !l.servidorId && l.id.startsWith('l-')), ...nuevas].map((l) => (l.grupo ? l : { ...l, grupo: 'lista' })) }))
     void guardarJson('listas', estado.listas.filter((l) => !l.servidorId))
+    // Las listas llevan también jingles, cuñas o programas, que no están en la biblioteca de música: se piden aparte.
+    for (const l of nuevas) {
+      if (!l.servidorId || !l.canciones.some((id) => !estado.idx.cancion.has(id))) continue
+      try { registrarExtras(((await oc('getPlaylist', { id: l.servidorId })).playlist?.entry ?? []).map(aCancion)) } catch { /* se verán sin datos */ }
+    }
   } catch { /* el servidor puede no admitirlo */ }
 }
 
@@ -544,6 +604,7 @@ export async function sincronizar(silencioso = true) {
     const b = await backend.sincronizar((fase, n) => poner({ sincronizando: `Actualizando ${fase}: ${n}` }))
     aplicarBiblioteca(b)
     void importarServidor()
+    void cargarMedios()
     if (!silencioso) aviso(`Biblioteca actualizada: ${b.canciones.length} canciones`)
   } catch (e) {
     aviso(`No se pudo actualizar la biblioteca: ${mensajeError(e)}`, 'error')
@@ -611,9 +672,10 @@ export async function conectar(servidor: string, usuario: string, clave: string)
 }
 
 export async function cerrarSesion() {
+  olvidarSoportePortadas()
   void backend.parar()
   await backend.olvidar()
-  poner({ fase: 'conexion', cola: [], indice: -1, actual: null, reproduciendo: false, bib: vacia, idx: indexar(vacia), necesitaClave: false, rol: 'listener' })
+  poner({ fase: 'conexion', cola: [], indice: -1, actual: null, reproduciendo: false, bib: vacia, idx: indexar(vacia), necesitaClave: false, rol: 'listener', medios: [], extras: {}, inteligentes: {}, opcionesInteligentes: null })
 }
 
 export function alternarPanelCola() {
@@ -641,6 +703,7 @@ export const resumenCancion = (c: Cancion) => `${c.artista} — ${c.album}`
 
 async function cargarRol() {
   poner({ rol: await rolDelUsuario(estado.usuario) })
+  void cargarInteligentes()
 }
 
 export interface Cambios {
@@ -668,6 +731,7 @@ async function tras(ids: string[], songs: any[] | undefined) {
     aplicarBiblioteca({ ...bib, canciones })
   }
   void sincronizar()
+  void cargarMedios()
   void ids
 }
 

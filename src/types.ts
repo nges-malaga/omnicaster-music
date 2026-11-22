@@ -9,6 +9,8 @@ export interface Cancion {
   caratula?: string | null; formato?: string | null; gananciaDb?: number | null
   /** Alta en la biblioteca (ISO 8601), para ordenar por fecha de inclusión */
   alta?: string | null
+  /** Tipo de medio del estudio («jingle», «commercial»…). Vacío o «music» = música. */
+  tipoMedio?: string
 }
 export interface Biblioteca { artistas: Artista[]; albumes: Album[]; canciones: Cancion[]; sincronizada?: number | null }
 export interface InfoServidor { version: string; serverType?: string | null; serverVersion?: string | null; openSubsonic: boolean }
@@ -21,6 +23,10 @@ export interface Lista {
   servidorId?: string
   /** «lista» (las de OmniCaster y las mías) o «emisión» (solo lectura) */
   grupo?: 'lista' | 'emision'
+  /** Carátula propia de la lista en la nube (o la de su primera canción) */
+  caratula?: string | null
+  /** ¿Tiene una portada puesta a propósito (no la de su primera canción)? */
+  portadaPropia?: boolean
 }
 export interface ProgresoSubida { indice: number; total: number; nombre: string; fase: string; hecho: number; bytes: number; error?: string | null }
 export interface ResultadoSubida { creadas: number; existian: number; fallos: string[] }
@@ -70,6 +76,8 @@ export interface Backend {
   llamarOc(metodo: string, params: [string, string][], cuerpo?: unknown): Promise<any>
   elegirArchivos(): Promise<string[]>
   subir(rutas: string[], bloque?: string): Promise<ResultadoSubida>
+  /** Sube una imagen (JPG) a la nube por su huella y devuelve la huella. Solo en la aplicación de escritorio. */
+  subirImagen(datos: number[]): Promise<string>
   onSubida(cb: (p: ProgresoSubida) => void): () => void
   buscarActualizacion(): Promise<{ version: string; instalar: () => Promise<void> } | null>
 }

@@ -4,7 +4,7 @@ import {
   alternarFavorito, anadirACola, anadirALista, formatoTiempo, guardarSinConexion, liberarEspacio, mostrarMenu, navegar,
   desactivarCanciones, listaEditable, mandarARevision, obtener, poner, reproducirADespues, reproducirLista, quitarDeLista, useApp, type ItemMenu,
 } from '../store'
-import { puede } from '../oc'
+import { esOtroMedio, nombreTipoMedio, puede } from '../oc'
 import type { Album, Cancion } from '../types'
 
 // ---------------------------------------------------------------- iconos
@@ -37,6 +37,11 @@ const RUTAS: Record<string, string> = {
   expand: 'M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z',
   trash: 'M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z',
   plus: 'M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z',
+  mic: 'M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z',
+  tag: 'M21.41 11.58l-9-9C12.05 2.22 11.55 2 11 2H4c-1.1 0-2 .9-2 2v7c0 .55.22 1.05.59 1.42l9 9c.36.36.86.58 1.41.58.55 0 1.05-.22 1.41-.59l7-7c.37-.36.59-.86.59-1.41 0-.55-.23-1.06-.59-1.42zM5.5 7C4.67 7 4 6.33 4 5.5S4.67 4 5.5 4 7 4.67 7 5.5 6.33 7 5.5 7z',
+  megaphone: 'M18 11v2h4v-2h-4zm-2 6.61c.96.71 2.21 1.65 3.2 2.39.4-.53.8-1.07 1.2-1.6-.99-.74-2.24-1.68-3.2-2.4-.4.54-.8 1.08-1.2 1.61zM20.4 5.6c-.4-.53-.8-1.07-1.2-1.6-.99.74-2.24 1.68-3.2 2.4.4.53.8 1.07 1.2 1.6.96-.72 2.21-1.65 3.2-2.4zM4 9c-1.1 0-2 .9-2 2v2c0 1.1.9 2 2 2h1v4h2v-4h1l5 3V6L8 9H4zm11.5 3c0-1.33-.58-2.53-1.5-3.35v6.69c.92-.81 1.5-2.01 1.5-3.34z',
+  sparkle: 'M12 2l2.4 6.6L21 11l-6.6 2.4L12 20l-2.4-6.6L3 11l6.6-2.4L12 2zm7 12l1 2.5 2.5 1-2.5 1-1 2.5-1-2.5-2.5-1 2.5-1 1-2.5z',
+  image: 'M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z',
   gear: 'M19.14 12.94c.04-.3.06-.61.06-.94s-.02-.64-.07-.94l2.03-1.58a.5.5 0 00.12-.64l-1.92-3.32a.5.5 0 00-.6-.22l-2.39.96a7 7 0 00-1.62-.94l-.36-2.54a.5.5 0 00-.5-.42h-3.84a.5.5 0 00-.5.42l-.36 2.54c-.59.24-1.13.56-1.62.94l-2.39-.96a.5.5 0 00-.6.22L2.74 8.84a.5.5 0 00.12.64l2.03 1.58c-.05.3-.07.63-.07.94s.02.64.07.94l-2.03 1.58a.5.5 0 00-.12.64l1.92 3.32c.12.22.37.29.6.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.26.42.5.42h3.84c.24 0 .45-.18.5-.42l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .6-.22l1.92-3.32a.5.5 0 00-.12-.64l-2.01-1.58zM12 15.6A3.6 3.6 0 1112 8.4a3.6 3.6 0 010 7.2z',
 }
 
@@ -107,10 +112,10 @@ export function menuCancion(c: Cancion, opts: { listaId?: string; ids?: string[]
     { texto: 'Añadir a la cola', accion: () => anadirACola(ids) },
     { separador: true },
   ]
-  if (c.albumId) items.push({ texto: 'Ir al álbum', accion: () => navegar({ t: 'album', id: c.albumId! }) })
+  if (c.albumId && !esOtroMedio(c)) items.push({ texto: 'Ir al álbum', accion: () => navegar({ t: 'album', id: c.albumId! }) })
   const alb = c.albumId ? s.idx.album.get(c.albumId) : undefined
   const artistaId = c.artistaId ?? alb?.artistaId
-  if (artistaId) items.push({ texto: 'Ir al artista', accion: () => navegar({ t: 'artista', id: artistaId }) })
+  if (artistaId && !esOtroMedio(c)) items.push({ texto: 'Ir al artista', accion: () => navegar({ t: 'artista', id: artistaId }) })
   items.push(
     { separador: true },
     { texto: fav ? 'Quitar de favoritos' : 'Favorito', accion: () => alternarFavorito(c.id) },
@@ -171,6 +176,11 @@ export function EnlaceArtista({ c, clase = '' }: { c: Cancion; clase?: string })
   const hay = useApp((s) => !!(c.artistaId ?? (c.albumId ? s.idx.album.get(c.albumId)?.artistaId : null)))
   if (!hay) return <span className={clase}>{c.artista}</span>
   return <button className={`enlace-texto ${clase}`} onClick={(e) => { e.stopPropagation(); irAArtista(c) }} title={`Ir a ${c.artista}`}>{c.artista}</button>
+}
+/** Lo que no es música (jingle, cuña, programa…) lleva su tipo delante del artista, para distinguirlo en listas y búsquedas. */
+export function TipoYArtista({ c }: { c: Cancion }) {
+  const tipos = useApp((s) => s.tipos)
+  return <span>{nombreTipoMedio(c.tipoMedio ?? '', tipos)} · {c.artista}</span>
 }
 export function EnlaceAlbum({ c, clase = '' }: { c: Cancion; clase?: string }) {
   if (!c.albumId) return <span className={clase}>{c.album}</span>
@@ -326,8 +336,8 @@ export function ListaCanciones({
           {favoritos.includes(c.id) && <span className="marca fav" title="Favorito"><Icono n="heartFill" tam={13} /></span>}
           {c.id in sinConexion && <span className="marca" title="Guardada sin conexión"><Icono n="download" tam={13} /></span>}
         </div>
-        <div className="col-artista"><EnlaceArtista c={c} /></div>
-        {mostrarAlbum && <div className="col-album"><EnlaceAlbum c={c} /></div>}
+        <div className="col-artista">{esOtroMedio(c) ? <TipoYArtista c={c} /> : <EnlaceArtista c={c} />}</div>
+        {mostrarAlbum && <div className="col-album">{esOtroMedio(c) ? <span>{c.album}</span> : <EnlaceAlbum c={c} />}</div>}
         <div className="col-duracion">{formatoTiempo(c.duracion)}</div>
       </div>,
     )

@@ -56,7 +56,16 @@ for (let a = 0; a < 10; a++) {
   }
   albumes.push(album)
 }
-const porId = Object.fromEntries(canciones.map((c) => [c.id, c]))
+// Otros medios (no son música): no salen en la biblioteca; cada tipo tiene su apartado y salen en las listas.
+const otros = [
+  ['o-1', 'Indicativo mañana', 'jingle'], ['o-2', 'Indicativo noche', 'jingle'], ['o-3', 'Ráfaga deportes', 'jingle'],
+  ['o-4', 'Cuña Panadería La Espiga', 'commercial'], ['o-5', 'Cuña Taller Ruiz', 'commercial'],
+  ['o-6', 'Programa: Buenos días', 'program'],
+].map(([id, title, mediaType], n) => ({
+  id, title, mediaType, artist: 'NG Radio', artistId: 'ar-ng', album: 'Continuidad', albumId: 'al-ng', genre: undefined,
+  duration: 10 + n * 3, suffix: 'wav', contentType: 'audio/wav', size: 0,
+}))
+const porId = Object.fromEntries([...canciones, ...otros].map((c) => [c.id, c]))
 const estrellas = new Set(['s-2'])
 
 // ---- audio: tono senoidal WAV 16 bits mono 22050 Hz
@@ -83,6 +92,7 @@ function wav(id) {
   return b
 }
 canciones.forEach((c) => wav(c.id))
+otros.forEach((c) => wav(c.id))
 
 // ---- carátulas: PNG degradado
 function crc32(buf) {
@@ -129,7 +139,7 @@ function hsl(h, s, l) {
 // ---- respuestas
 const resp = (extra = {}) => ({ 'subsonic-response': { status: 'ok', version: '1.16.1', type: 'mock', serverVersion: '0.1', openSubsonic: true, ...extra } })
 const fallo = (code, message) => ({ 'subsonic-response': { status: 'failed', version: '1.16.1', error: { code, message } } })
-const cancionOut = (s) => ({ ...s, isDir: false, type: 'music', ...(estrellas.has(s.id) ? { starred: '2026-01-01T00:00:00Z' } : {}) })
+const cancionOut = (s) => ({ ...s, isDir: false, type: 'music', ...(s.mediaType ? { ocMediaType: s.mediaType } : {}), ...(estrellas.has(s.id) ? { starred: '2026-01-01T00:00:00Z' } : {}) })
 const albumOut = (a) => ({ id: a.id, name: a.name, artist: a.artist, artistId: a.artistId, year: a.year, genre: a.genre, coverArt: a.coverArt, songCount: a.songCount, duration: a.duration, created: a.created })
 
 // Usuarios de prueba: demo (oyente), operario y admin. Contraseña: demo
@@ -149,10 +159,55 @@ const desactivadas = new Set()
 const revision = new Set()
 const extras = {} // datos de edición por canción
 const cambios = [] // registro de ediciones
-let listaBl = [0, 1, 2]
+const listas = [
+  { id: 'bl-1', nombre: 'Favoritas de la casa', ids: ['s-1', 's-2', 's-3', 'o-1'], air: false },
+  { id: 'pl-1', nombre: 'Emisión · Mezcla de ejemplo', ids: ['s-4', 's-5', 's-6'], air: true },
+]
+const inteligentes = new Map() // listas inteligentes por id (sin «bl-»)
+const medios = new Set() // huellas de imágenes subidas
 const fichaOut = (s) => ({ ...cancionOut(s), energy: 3, mood: 'alegre', themes: 'verano, playa', language: 'es', tags: revision.has(s.id) ? 'revisar' : undefined, ocDisabled: desactivadas.has(s.id) || undefined, ...(extras[s.id] ?? {}) })
-const ROL_MIN = { ocEditSongs: 1, ocSetDisabled: 2, ocListSongs: 1, ocHistory: 1, ocUndo: 1, createPlaylist: 1, updatePlaylist: 1, deletePlaylist: 2 }
+const ROL_MIN = {
+  ocEditSongs: 1, ocSetDisabled: 2, ocListSongs: 1, ocHistory: 1, ocUndo: 1, createPlaylist: 1, updatePlaylist: 1, deletePlaylist: 2,
+  ocGetMediaTypes: 1, ocGetSmartLists: 1, ocPreviewSmartList: 2, ocSaveSmartList: 2, ocStopSmartList: 2, ocSetListCover: 1, ocRegenerateSmartCover: 2,
+}
 const NIVEL = { listener: 0, operator: 1, admin: 2 }
+
+// ---- listas inteligentes (versión reducida de la nube: texto, listas y números; orden y máximo)
+const OPN = { is: 'es', isnot: 'no es', contains: 'contiene', notcontains: 'no contiene', has: 'incluye', hasnot: 'no incluye', gte: '≥', lte: '≤', between: 'entre', empty: 'vacío', notempty: 'con dato' }
+const datosRegla = (c) => ({
+  genre: c.genre, mood: extras[c.id]?.mood ?? 'alegre', language: extras[c.id]?.language ?? 'es', artist: c.artist, title: c.title, album: c.album,
+  tags: revision.has(c.id) ? ['revisar'] : [], themes: ['verano', 'playa'], energy: extras[c.id]?.energy ?? 3, durationSecs: c.duration, year: c.year, mediaType: c.mediaType ?? '',
+})
+function evaluarReglas(r) {
+  if (!r || !Array.isArray(r.rules) || !r.rules.length) throw new Error('Añade al menos una regla.')
+  const cumple = (c, x) => {
+    const v = datosRegla(c)[x.field]
+    const t = (z) => String(z ?? '').toLowerCase()
+    switch (x.op) {
+      case 'is': return typeof v === 'number' ? v === Number(x.value) : t(v) === t(x.value)
+      case 'isnot': return t(v) !== t(x.value)
+      case 'contains': return t(v).includes(t(x.value))
+      case 'notcontains': return !t(v).includes(t(x.value))
+      case 'has': return (v ?? []).map(t).includes(t(x.value))
+      case 'hasnot': return !(v ?? []).map(t).includes(t(x.value))
+      case 'gte': return Number(v) >= Number(x.value)
+      case 'lte': return Number(v) <= Number(x.value)
+      case 'between': return Number(v) >= x.value[0] && Number(v) <= x.value[1]
+      case 'empty': return Array.isArray(v) ? !v.length : !v
+      case 'notempty': return Array.isArray(v) ? !!v.length : !!v
+      default: return false
+    }
+  }
+  let l = [...canciones, ...otros].filter((c) => (r.match === 'any' ? r.rules.some((x) => cumple(c, x)) : r.rules.every((x) => cumple(c, x))))
+  if (r.sort === 'title') l.sort((a, b) => a.title.localeCompare(b.title, 'es'))
+  if (r.limit > 0) l = l.slice(0, r.limit)
+  return l.map((c) => c.id)
+}
+const resumenReglas = (r) => r.rules.map((x) => `${x.field} ${OPN[x.op]}${x.value !== undefined ? ' ' + x.value : ''}`).join(r.match === 'any' ? ' o ' : ' y ')
+const listaOut = (l) => ({
+  id: l.id, name: l.nombre, ocKind: l.air ? 'air' : 'list', songCount: l.ids.length, owner: 'OmniCaster', public: true,
+  coverArt: l.portada ? `cv-${l.portada}` : porId[l.ids[0]]?.coverArt, ...(l.air ? {} : { ocCoverOwn: !!l.portada }),
+})
 
 function manejar(metodo, q, cuerpo = {}) {
   const rol = ROLES[q.get('u')]
@@ -171,6 +226,8 @@ function manejar(metodo, q, cuerpo = {}) {
         if (set.album) c.album = set.album
         if (set.energy !== undefined) (extras[id] ??= {}).energy = set.energy
         if (set.mood !== undefined) (extras[id] ??= {}).mood = set.mood
+        if (set.language !== undefined) (extras[id] ??= {}).language = set.language
+        if (set.mediaType !== undefined) (extras[id] ??= {}).ocMediaType = set.mediaType
         if (cuerpo.review === true) revision.add(id)
         if (cuerpo.review === false) revision.delete(id)
         cambios.push({ n: cambios.length + 1, id, by: q.get('u') })
@@ -183,9 +240,84 @@ function manejar(metodo, q, cuerpo = {}) {
     }
     case 'ocListSongs': return resp({ song: (q.get('filter') === 'disabled' ? [...desactivadas] : [...revision]).map((i) => fichaOut(porId[i])) })
     case 'ocHistory': return resp({ entry: [] })
+    case 'createPlaylist': {
+      const nombre = String(q.get('name') ?? '').trim()
+      if (!nombre) return fallo(10, 'Falta el nombre de la lista.')
+      const l = { id: `bl-${crypto.randomUUID().replace(/-/g, '')}`, nombre, ids: q.getAll('songId'), air: false }
+      listas.push(l)
+      return resp({ playlist: { ...listaOut(l), entry: l.ids.map((i) => cancionOut(porId[i])) } })
+    }
     case 'updatePlaylist': {
-      for (const i of q.getAll('songIdToAdd')) { const n = canciones.findIndex((c) => c.id === i); if (n >= 0 && !listaBl.includes(n)) listaBl.push(n) }
+      const l = listas.find((x) => x.id === q.get('playlistId') && !x.air)
+      if (!l) return fallo(70, 'La lista no existe o es de solo lectura.')
+      if (q.get('name')) l.nombre = q.get('name')
+      for (const i of q.getAll('songIdToAdd')) if (porId[i] && !l.ids.includes(i)) l.ids.push(i)
+      const quitar = q.getAll('songIndexToRemove').map(Number)
+      if (quitar.length) l.ids = l.ids.filter((_, n) => !quitar.includes(n))
+      return resp({ playlist: { ...listaOut(l), entry: l.ids.map((i) => cancionOut(porId[i])) } })
+    }
+    case 'deletePlaylist': {
+      const n = listas.findIndex((x) => x.id === q.get('id') && !x.air)
+      if (n < 0) return fallo(70, 'La lista no existe o es de solo lectura.')
+      listas.splice(n, 1)
       return resp()
+    }
+    // ---- otros medios
+    case 'ocGetMediaTypes': {
+      const serie = [['', 'Música', true], ['jingle', 'Jingle', false], ['program', 'Programa', false], ['podcast', 'Podcast', false], ['commercial', 'Cuña', false]]
+      return resp({ mediaType: serie.map(([id, label, inMusic]) => ({ id, label, inMusic })) })
+    }
+    case 'ocGetMediaSections': {
+      const nombres = { jingle: 'Jingle', program: 'Programa', podcast: 'Podcast', commercial: 'Cuña' }
+      const tipos = [...new Set(otros.map((o) => o.mediaType))]
+      return resp({ section: tipos.map((id) => { const l = otros.filter((o) => o.mediaType === id); return { id, label: nombres[id] ?? id, count: l.length, duration: l.reduce((a, o) => a + o.duration, 0) } }) })
+    }
+    case 'ocGetMediaSongs': {
+      const l = otros.filter((o) => o.mediaType === q.get('type'))
+      return l.length ? resp({ song: l.map(cancionOut) }) : fallo(70, 'No encontrado')
+    }
+    // ---- listas inteligentes
+    case 'ocGetSmartLists': {
+      const top = (k) => [...new Set(canciones.map((c) => datosRegla(c)[k]).flat().filter(Boolean))].slice(0, 80)
+      const propia = (x) => listas.find((l) => l.id === 'bl-' + x.id)
+      return resp({
+        lists: [...inteligentes.values()].filter(propia).map((x) => ({ ...x, name: propia(x).nombre, count: propia(x).ids.length })),
+        options: { genre: top('genre'), mood: top('mood'), language: top('language'), artist: top('artist'), mediaType: ['jingle', 'commercial', 'program'], tags: top('tags'), themes: top('themes'), blocks: listas.filter((l) => l.id.startsWith('bl-')).map((l) => ({ id: l.id.slice(3), name: l.nombre })) },
+      })
+    }
+    case 'ocPreviewSmartList': {
+      try {
+        const ids = evaluarReglas(cuerpo.rules)
+        return resp({ total: ids.length, summary: resumenReglas(cuerpo.rules), sample: ids.slice(0, 25).map((id) => { const c = porId[id]; return { id, title: c.title, artist: c.artist, energy: 3, popularity: null, addedAt: 0 } }) })
+      } catch (e) { return fallo(10, e.message) }
+    }
+    case 'ocSaveSmartList': {
+      const nombre = String(cuerpo.name ?? '').trim()
+      if (!nombre) return fallo(10, 'Falta el nombre de la lista.')
+      let ids
+      try { ids = evaluarReglas(cuerpo.rules) } catch (e) { return fallo(10, e.message) }
+      let id = String(cuerpo.id ?? '').replace(/^bl-/, '')
+      if (listas.some((l) => l.nombre.toLowerCase() === nombre.toLowerCase() && l.id !== 'bl-' + id)) return fallo(10, 'Ya existe una lista con ese nombre.')
+      if (!id) { id = crypto.randomUUID().replace(/-/g, ''); listas.push({ id: 'bl-' + id, nombre, ids, air: false }) }
+      else { const l = listas.find((x) => x.id === 'bl-' + id); if (!l) return fallo(70, 'La lista ya no existe.'); l.nombre = nombre; l.ids = ids }
+      inteligentes.set(id, { id, rules: cuerpo.rules, summary: resumenReglas(cuerpo.rules), updatedAt: Date.now(), runAt: Date.now(), by: q.get('u') })
+      return resp({ id })
+    }
+    case 'ocStopSmartList': {
+      inteligentes.delete(String(q.get('id') ?? '').replace(/^bl-/, ''))
+      return resp({ ok: true })
+    }
+    // ---- portadas de lista
+    case 'ocSetListCover':
+    case 'ocRegenerateSmartCover': {
+      const id = String(q.get('id') ?? cuerpo.id ?? '')
+      const l = listas.find((x) => x.id === id && x.id.startsWith('bl-'))
+      if (!l) return fallo(70, 'La lista no existe.')
+      if (metodo === 'ocRegenerateSmartCover') { l.portada = crypto.createHash('sha256').update(id + Date.now()).digest('hex'); return resp({ id, cover: `media:${l.portada}.jpg`, coverArt: `cv-${l.portada}` }) }
+      const hash = String(cuerpo.hash ?? '').toLowerCase()
+      if (!hash) { delete l.portada; return resp({ id, cover: '' }) }
+      l.portada = hash
+      return resp({ id, cover: `media:${hash}.jpg`, coverArt: `cv-${hash}` })
     }
     case 'ping': return resp()
     case 'getLicense': return resp({ license: { valid: true } })
@@ -237,14 +369,16 @@ function manejar(metodo, q, cuerpo = {}) {
         searchResult3: {
           artist: pagina(artistas.filter((a) => ok(a.name)), q, 'artistCount', 'artistOffset'),
           album: pagina(albumes.filter((a) => ok(a.name, a.artist)), q, 'albumCount', 'albumOffset').map(albumOut),
-          song: pagina(canciones.filter((s) => ok(s.title, s.artist, s.album)), q, 'songCount', 'songOffset').map(cancionOut),
+          // Los otros medios solo salen con texto: la sincronización de la biblioteca (consulta vacía) no los ve.
+          song: pagina((t ? [...canciones, ...otros] : canciones).filter((s) => ok(s.title, s.artist, s.album)), q, 'songCount', 'songOffset').map(cancionOut),
         },
       })
     }
-    case 'getPlaylists': return resp({ playlists: { playlist: [{ id: 'bl-1', name: 'Favoritas de la casa', songCount: listaBl.length }, { id: 'pl-1', name: 'Emisión · Mezcla de ejemplo', songCount: 3 }] } })
-    case 'getPlaylist': return q.get('id') === 'bl-1'
-      ? resp({ playlist: { id: 'bl-1', name: 'Favoritas de la casa', songCount: listaBl.length, entry: listaBl.map((n) => cancionOut(canciones[n])) } })
-      : resp({ playlist: { id: 'pl-1', name: 'Emisión · Mezcla de ejemplo', songCount: 3, entry: canciones.slice(0, 3).map(cancionOut) } })
+    case 'getPlaylists': return resp({ playlists: { playlist: listas.map(listaOut) } })
+    case 'getPlaylist': {
+      const l = listas.find((x) => x.id === q.get('id'))
+      return l ? resp({ playlist: { ...listaOut(l), entry: l.ids.map((i) => cancionOut(porId[i])) } }) : fallo(70, 'Lista no encontrada')
+    }
     case 'getStarred2': return resp({ starred2: { song: [...estrellas].map((i) => cancionOut(porId[i])), album: [], artist: [] } })
     // star, unstar, scrobble: el servidor real puede no hacer nada; aquí tampoco.
     case 'star': case 'unstar': case 'scrobble': return resp()
@@ -283,9 +417,10 @@ http
     }
     if (metodo === 'getCoverArt') {
       const id = q.get('id') || ''
-      if (!/^al-\d+$/.test(id)) return json(fallo(70, 'Carátula no encontrada'))
+      const semilla = /^al-\d+$/.test(id) ? Number(id.slice(3)) : /^cv-[a-f0-9]+$/.test(id) ? parseInt(id.slice(3, 9), 16) % 997 : null
+      if (semilla === null) return json(fallo(70, 'Carátula no encontrada'))
       res.writeHead(200, { ...cors, 'Content-Type': 'image/png', 'Cache-Control': 'max-age=3600' })
-      return res.end(png(Number(id.slice(3)), Math.min(Number(q.get('size') || 120), 240)))
+      return res.end(png(semilla, Math.min(Number(q.get('size') || 120), 240)))
     }
     if (req.method === 'POST') {
       let datos = ''

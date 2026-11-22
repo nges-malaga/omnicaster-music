@@ -56,6 +56,7 @@ export const backendTauri: Backend = {
     return Array.isArray(r) ? r : typeof r === 'string' ? [r] : []
   },
   subir: (rutas, bloque) => invoke('subir_archivos', { rutas, bloque: bloque ?? null }),
+  subirImagen: (datos) => invoke('subir_imagen', { datos }),
   onSubida: (cb) => escuchar('subida-progreso', cb),
   buscarActualizacion: async () => {
     const { check } = await import('@tauri-apps/plugin-updater')

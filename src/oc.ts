@@ -74,7 +74,7 @@ export function aCancion(s: any): Cancion {
     id: String(s.id), titulo: s.title || 'Sin título', artista: s.artist || 'Artista desconocido', artistaId: s.artistId ? String(s.artistId) : null,
     album: s.album || 'Álbum desconocido', albumId: s.albumId ? String(s.albumId) : null, pista: num(s.track), disco: num(s.discNumber),
     anio: num(s.year), genero: s.genre ?? null, duracion: num(s.duration) ?? 0, caratula: s.coverArt ? String(s.coverArt) : null,
-    formato: s.suffix ?? null, gananciaDb: null, alta: s.created ?? null,
+    formato: s.suffix ?? null, gananciaDb: null, alta: s.created ?? null, tipoMedio: s.ocMediaType ?? '',
   }
 }
 
@@ -84,4 +84,52 @@ export async function rolDelUsuario(usuario: string): Promise<Rol> {
     const r = b.user?.ocRole
     return r === 'admin' || r === 'operator' ? r : 'listener'
   } catch { return 'listener' }
+}
+
+// ---------------------------------------------------------------- otros medios (jingles, cuñas, programas…)
+// No son música: no salen en la biblioteca y cada tipo tiene su apartado, como en el estudio. Sí salen en
+// las listas y en la búsqueda, con su tipo delante del artista.
+
+/** Tipo de medio del estudio. La música es el tipo vacío. */
+export interface TipoMedio { id: string; label: string; inMusic: boolean }
+
+/** Los de serie del estudio, por si el servidor aún no tiene ocGetMediaTypes. */
+export const TIPOS_MEDIO_SERIE: TipoMedio[] = [
+  { id: '', label: 'Música', inMusic: true },
+  { id: 'jingle', label: 'Jingle', inMusic: false },
+  { id: 'program', label: 'Programa', inMusic: false },
+  { id: 'podcast', label: 'Podcast', inMusic: false },
+  { id: 'commercial', label: 'Cuña', inMusic: false },
+]
+
+/** Tipos para el desplegable de la ficha: los de serie más los que use alguna canción de la emisora. */
+export async function tiposDeMedio(): Promise<TipoMedio[]> {
+  try {
+    const l = ((await oc('ocGetMediaTypes')).mediaType ?? []) as TipoMedio[]
+    return l.length ? l : TIPOS_MEDIO_SERIE
+  } catch { return TIPOS_MEDIO_SERIE }
+}
+
+/** Nombre a mostrar de un tipo («music» o vacío = Música; uno desconocido, su propio id). */
+export function nombreTipoMedio(id: string, tipos: TipoMedio[] = TIPOS_MEDIO_SERIE): string {
+  const k = id === 'music' ? '' : id
+  return tipos.find((t) => t.id === k)?.label ?? TIPOS_MEDIO_SERIE.find((t) => t.id === k)?.label ?? k
+}
+
+/** ¿Es algo que no es música (jingle, cuña, programa…)? */
+export const esOtroMedio = (c: Pick<Cancion, 'tipoMedio'>) => !!c.tipoMedio && c.tipoMedio !== 'music'
+
+/** Apartado de otros medios con algo dentro. */
+export interface ApartadoMedio { id: string; label: string; count: number; duration: number }
+
+const PLURAL: Record<string, string> = { jingle: 'Jingles', program: 'Programas', podcast: 'Podcasts', commercial: 'Cuñas' }
+export const nombreApartado = (a: { id: string; label: string }) => PLURAL[a.id] ?? a.label
+export const ICONO_APARTADO: Record<string, string> = { jingle: 'megaphone', program: 'mic', podcast: 'radio', commercial: 'tag' }
+
+export async function apartadosDeMedios(): Promise<ApartadoMedio[]> {
+  try { return ((await oc('ocGetMediaSections')).section ?? []) as ApartadoMedio[] } catch { return [] }
+}
+
+export async function cancionesDeMedio(tipo: string): Promise<Cancion[]> {
+  return ((await oc('ocGetMediaSongs', { type: tipo })).song ?? []).map(aCancion)
 }
