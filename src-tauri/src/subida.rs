@@ -258,3 +258,37 @@ pub fn subir(cli: &Client, rutas: Vec<String>, bloque: Option<String>, emitir: &
     evento(total, "", "hecho", 0, 0, None);
     Ok(res)
 }
+
+/// Huella sha256 (hexadecimal) de unos bytes en memoria.
+pub fn huella_bytes(datos: &[u8]) -> String {
+    Sha256::digest(datos).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Sube una imagen (JPG) por su huella, como el audio: si ya está en la nube no se vuelve a subir.
+/// Devuelve la huella, que luego se pone de portada de una lista con `ocSetListCover`.
+pub fn subir_imagen(cli: &Client, datos: &[u8]) -> Result<String, String> {
+    if datos.is_empty() || datos.len() > 20 * 1024 * 1024 {
+        return Err("La imagen no es válida o es demasiado grande.".into());
+    }
+    let hash = huella_bytes(datos);
+    let falta = cli.call_oc("ocMediaMissing", &[], Some(&json!({ "hashes": [hash] }))).map_err(|e| e.to_string())?;
+    let falta = ok_oc(&falta)?.get("missing").and_then(Value::as_array).map(|a| !a.is_empty()).unwrap_or(true);
+    if falta {
+        let http = http_largo()?;
+        let url = cli.url("ocUploadMedia", &[("hash", hash.clone())]);
+        let r = http.put(&url).header("content-type", "image/jpeg").body(datos.to_vec()).send().map_err(|e| format!("Error de red al subir: {e}"))?;
+        let v: Value = serde_json::from_str(&r.text().map_err(|e| e.to_string())?).map_err(|_| "Respuesta no válida del servidor".to_string())?;
+        ok_oc(v.get("subsonic-response").unwrap_or(&v))?;
+    }
+    Ok(hash)
+}
+
+#[cfg(test)]
+mod pruebas_imagen {
+    use super::*;
+
+    #[test]
+    fn huella_de_bytes_es_sha256_en_hexadecimal() {
+        assert_eq!(huella_bytes(b"abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    }
+}

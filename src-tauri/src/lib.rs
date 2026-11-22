@@ -651,11 +651,20 @@ fn medios_estado(app: AppHandle, reproduciendo: bool, posicion: f64) -> Result<(
 #[tauri::command]
 async fn servidor_oc(app: AppHandle, metodo: String, params: Vec<(String, String)>, cuerpo: Option<serde_json::Value>) -> Result<serde_json::Value, String> {
     bloquear(move || {
-        if !(metodo.starts_with("oc") || matches!(metodo.as_str(), "getUser" | "getSong" | "createPlaylist" | "updatePlaylist" | "deletePlaylist" | "getPlaylists" | "getPlaylist")) {
+        if !(metodo.starts_with("oc") || matches!(metodo.as_str(), "getUser" | "getSong" | "createPlaylist" | "updatePlaylist" | "deletePlaylist" | "getPlaylists" | "getPlaylist" | "search3")) {
             return Err("Método no permitido.".into());
         }
         let cli = app.state::<Estado>().cliente()?;
         cli.call_oc(&metodo, &params, cuerpo.as_ref()).map_err(e)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn subir_imagen(app: AppHandle, datos: Vec<u8>) -> Result<String, String> {
+    bloquear(move || {
+        let cli = app.state::<Estado>().cliente()?;
+        subida::subir_imagen(&cli, &datos)
     })
     .await
 }
@@ -735,6 +744,7 @@ pub fn run() {
             medios_estado,
             servidor_oc,
             subir_archivos,
+            subir_imagen,
             extensiones_audio,
         ])
         .run(tauri::generate_context!())
