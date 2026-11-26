@@ -49,6 +49,7 @@ export const backendTauri: Backend = {
     return typeof r === 'string' ? r : null
   },
   llamarOc: (metodo, params, cuerpo) => invoke('servidor_oc', { metodo, params, cuerpo: cuerpo ?? null }),
+  abrirEnlace: (url) => invoke('abrir_enlace', { url }),
   elegirArchivos: async () => {
     const { open } = await import('@tauri-apps/plugin-dialog')
     const exts: string[] = await invoke('extensiones_audio')

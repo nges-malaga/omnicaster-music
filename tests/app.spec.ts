@@ -370,3 +370,57 @@ test('portada de lista: el administrador la regenera con IA y la quita; el opera
   await page.getByRole('menuitem', { name: 'Quitar portada' }).click()
   await expect(page.getByText('Portada quitada')).toBeVisible()
 })
+
+
+// ---------------------------------------------------------------- enlaces a plataformas
+
+async function abrirFichaPrimera(page: Page) {
+  await page.getByRole('button', { name: 'Canciones' }).first().click()
+  await page.getByRole('row').filter({ hasText: /^\d/ }).first().click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Ficha…' }).click()
+  return page.getByRole('dialog', { name: 'Ficha de la canción' })
+}
+
+test('enlaces: el oyente ve «Escuchar en» y no puede editarlos', async ({ page }) => {
+  await conectar(page)
+  const d = await abrirFichaPrimera(page)
+  const fila = d.getByLabel('Escuchar en')
+  await expect(fila.getByRole('button', { name: 'Escuchar en Spotify' })).toBeVisible()
+  await expect(fila.getByRole('button', { name: 'Escuchar en YouTube' })).toBeVisible()
+  await expect(fila.getByRole('button', { name: 'Escuchar en TIDAL' })).toHaveCount(0)
+  await expect(d.getByRole('button', { name: 'Editar enlaces' })).toHaveCount(0)
+  await expect(d.getByRole('button', { name: 'Buscar enlaces' })).toHaveCount(0)
+  // Sin red en las pruebas: se comprueba qué URL se pide abrir.
+  await page.evaluate(() => { (window as any).abiertas = []; window.open = ((u: string) => { (window as any).abiertas.push(u); return null }) as typeof window.open })
+  await fila.getByRole('button', { name: 'Escuchar en Spotify' }).click()
+  expect(await page.evaluate(() => (window as any).abiertas)).toEqual(['https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC'])
+})
+
+test('enlaces: el operario valida, guarda y busca', async ({ page }) => {
+  await conectar(page, 'operario')
+  const d = await abrirFichaPrimera(page)
+  await d.getByRole('button', { name: 'Editar enlaces' }).click()
+  const am = d.getByLabel('Apple Music')
+  await am.fill('https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC')
+  await expect(d.getByText('No es un enlace de Apple Music a una canción')).toBeVisible()
+  await expect(d.getByRole('button', { name: 'Guardar enlaces' })).toBeDisabled()
+  await am.fill('https://music.apple.com/es/album/cancion/1440857781?i=1440857789')
+  await d.getByLabel('YouTube', { exact: true }).fill('')
+  await d.getByRole('button', { name: 'Guardar enlaces' }).click()
+  await expect(page.getByText('Enlaces guardados')).toBeVisible()
+  const fila = d.getByLabel('Escuchar en')
+  await expect(fila.getByRole('button', { name: 'Escuchar en Apple Music' })).toBeVisible()
+  await expect(fila.getByRole('button', { name: 'Escuchar en YouTube', exact: true })).toHaveCount(0)
+  await d.getByRole('button', { name: 'Buscar enlaces' }).click()
+  await expect(page.getByText('Encontrados: TIDAL')).toBeVisible()
+  await expect(fila.getByRole('button', { name: 'Escuchar en TIDAL' })).toBeVisible()
+})
+
+test('enlaces: si la nube no tiene las operaciones, solo se ven', async ({ page }) => {
+  await page.route(/\/rest\/oc(Set|Find)SongLinks/, (r) => r.fulfill({ json: { 'subsonic-response': { status: 'failed', version: '1.16.1', error: { code: 0, message: 'Método no disponible: ocSetSongLinks' } } } }))
+  await conectar(page, 'operario')
+  const d = await abrirFichaPrimera(page)
+  await expect(d.getByLabel('Escuchar en').getByRole('button', { name: 'Escuchar en Spotify' })).toBeVisible()
+  await expect(d.getByRole('button', { name: 'Editar enlaces' })).toHaveCount(0)
+  await expect(d.getByRole('button', { name: 'Buscar enlaces' })).toHaveCount(0)
+})

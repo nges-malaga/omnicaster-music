@@ -686,12 +686,46 @@ fn extensiones_audio() -> Vec<&'static str> {
     subida::EXTENSIONES.to_vec()
 }
 
+/// Abre en el navegador del sistema el enlace de una canción a una plataforma de streaming.
+/// Solo admite https y los dominios de esas plataformas: la interfaz no puede abrir otra cosa.
+#[tauri::command]
+fn abrir_enlace(app: AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    if !enlace_permitido(&url) {
+        return Err("Ese enlace no es de una plataforma admitida.".into());
+    }
+    app.opener().open_url(url, None::<&str>).map_err(|e| format!("No se pudo abrir el enlace: {e}"))
+}
+
+pub fn enlace_permitido(url: &str) -> bool {
+    let Some(resto) = url.strip_prefix("https://") else { return false };
+    let host = resto.split(['/', '?', '#']).next().unwrap_or("").to_ascii_lowercase();
+    if host.contains('@') || host.contains(':') {
+        return false;
+    }
+    const EXACTOS: &[&str] = &[
+        "open.spotify.com", "music.apple.com", "geo.music.apple.com", "www.youtube.com", "youtube.com", "m.youtube.com", "youtu.be",
+        "music.youtube.com", "tidal.com", "listen.tidal.com",
+    ];
+    if EXACTOS.contains(&host.as_str()) || host.ends_with(".tidal.com") {
+        return true;
+    }
+    // music.amazon.com, music.amazon.es, music.amazon.co.uk, music.amazon.com.mx…
+    // (igual que la nube: com, un código de país de dos letras, co.xx o com.xx)
+    let pais = |p: &str| p.len() == 2 && p.chars().all(|c| c.is_ascii_lowercase());
+    host.strip_prefix("music.amazon.").is_some_and(|tld| match tld.split_once('.') {
+        None => tld == "com" || pais(tld),
+        Some((a, b)) => (a == "co" || a == "com") && pais(b),
+    })
+}
+
 // ---------------------------------------------------------------- arranque
 
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .register_asynchronous_uri_scheme_protocol("cover", |ctx, request, responder| {
             let app = ctx.app_handle().clone();
@@ -743,10 +777,29 @@ pub fn run() {
             medios_metadatos,
             medios_estado,
             servidor_oc,
+            abrir_enlace,
             subir_archivos,
             subir_imagen,
             extensiones_audio,
         ])
         .run(tauri::generate_context!())
         .expect("error al ejecutar OmniCaster Music");
+}
+
+#[cfg(test)]
+mod pruebas_enlaces {
+    use super::enlace_permitido;
+    #[test]
+    fn solo_plataformas() {
+        assert!(enlace_permitido("https://open.spotify.com/track/abc"));
+        assert!(enlace_permitido("https://music.amazon.es/albums/B0?trackAsin=X"));
+        assert!(enlace_permitido("https://tidal.com/browse/track/1"));
+        assert!(!enlace_permitido("http://open.spotify.com/track/abc"));
+        assert!(!enlace_permitido("https://open.spotify.com.evil.com/x"));
+        assert!(!enlace_permitido("https://evil.com@open.spotify.com/x"));
+        assert!(!enlace_permitido("file:///etc/passwd"));
+        assert!(!enlace_permitido("https://music.amazon.evil.example.com/x"));
+        assert!(!enlace_permitido("https://music.amazon.evil.com/x"));
+        assert!(enlace_permitido("https://music.amazon.co.uk/x"));
+    }
 }

@@ -203,6 +203,7 @@ export const backendWeb: Backend = {
     return j['subsonic-response']
   },
   async elegirArchivos() { return [] },
+  async abrirEnlace(url) { window.open(url, '_blank', 'noopener,noreferrer') },
   async subir() { throw 'Subir canciones solo está disponible en la aplicación de escritorio.' },
   async subirImagen() { throw 'Subir imágenes solo está disponible en la aplicación de escritorio.' },
   onSubida() { return () => {} },

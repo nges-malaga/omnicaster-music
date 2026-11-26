@@ -2,6 +2,9 @@
 import { useEffect, useState } from 'react'
 import { ETIQUETA_ROL, cargarFicha, energiaPuntos, nombreTipoMedio, oc, puede, type Ficha } from '../oc'
 import { nombreIdioma, opcionesIdioma } from '../idiomas'
+import { backend } from '../backend'
+import { EJEMPLO_PLATAFORMA, NOMBRE_PLATAFORMA, PLATAFORMAS, SIGLA_PLATAFORMA, buscarEnlaces, guardarEnlaces, normalizarEnlace, soporteEditarEnlaces, type Enlaces, type Plataforma } from '../enlaces'
+import type { Rol } from '../types'
 import { aviso, deshacerCambio, editarCanciones, obtener, poner, useApp } from '../store'
 
 const FICHA_VACIA: Ficha | null = null
@@ -61,6 +64,7 @@ export function FichaCancion() {
             <dt>Tipo de medio</dt><dd>{nombreTipoMedio(f.tipoMedio, tipos)}</dd>
             {f.desactivada && <><dt>Estado</dt><dd>Desactivada</dd></>}
           </dl>
+          <EnlacesCancion id={f.id} enlaces={f.enlaces} rol={rol} onCambio={(enlaces) => setF((x) => (x ? { ...x, enlaces } : x))} onHist={cargar} />
           {hist.length > 0 && (
             <div className="historial">
               <h3>Cambios</h3>
@@ -233,5 +237,79 @@ export function SubidaCanciones() {
         </>
       )}
     </Modal>
+  )
+}
+
+// ---------------------------------------------------------------- enlaces a plataformas
+
+function EnlacesCancion({ id, enlaces, rol, onCambio, onHist }: { id: string; enlaces: Enlaces; rol: Rol; onCambio: (e: Enlaces) => void; onHist: () => void }) {
+  const gestor = puede(rol, 'operator')
+  const [editable, setEditable] = useState(false)
+  const [editando, setEditando] = useState(false)
+  const [buscando, setBuscando] = useState(false)
+  const [t, setT] = useState<Record<Plataforma, string>>(() => Object.fromEntries(PLATAFORMAS.map((p) => [p, ''])) as Record<Plataforma, string>)
+  const [guardando, setGuardando] = useState(false)
+  useEffect(() => { if (gestor) soporteEditarEnlaces().then(setEditable).catch(() => setEditable(false)) }, [gestor])
+  const hay = PLATAFORMAS.filter((p) => enlaces[p])
+  const abrir = (url: string) => backend.abrirEnlace(url).catch((e) => aviso(String(e?.message ?? e), 'error'))
+  const empezar = () => { setT(Object.fromEntries(PLATAFORMAS.map((p) => [p, enlaces[p] ?? ''])) as Record<Plataforma, string>); setEditando(true) }
+  const errorDe = (p: Plataforma) => (t[p].trim() && !normalizarEnlace(p, t[p]) ? `No es un enlace de ${NOMBRE_PLATAFORMA[p]} a una canción` : '')
+  const invalido = PLATAFORMAS.some((p) => errorDe(p))
+  const guardar = async () => {
+    const cambios: Partial<Record<Plataforma, string>> = {}
+    for (const p of PLATAFORMAS) {
+      const nuevo = t[p].trim() ? normalizarEnlace(p, t[p])! : ''
+      if (nuevo !== (enlaces[p] ?? '')) cambios[p] = nuevo
+    }
+    if (!Object.keys(cambios).length) return setEditando(false)
+    setGuardando(true)
+    try {
+      onCambio(await guardarEnlaces(id, cambios))
+      aviso('Enlaces guardados')
+      setEditando(false)
+      onHist()
+    } catch (e) { aviso(String((e as Error)?.message ?? e), 'error') } finally { setGuardando(false) }
+  }
+  const buscar = async () => {
+    setBuscando(true)
+    try {
+      const r = await buscarEnlaces(id)
+      onCambio(r.enlaces)
+      aviso(r.encontrados.length ? `Encontrados: ${r.encontrados.map((p) => NOMBRE_PLATAFORMA[p]).join(', ')}` : 'No se han encontrado enlaces nuevos')
+      if (r.encontrados.length) onHist()
+    } catch (e) { aviso(String((e as Error)?.message ?? e), 'error') } finally { setBuscando(false) }
+  }
+  return (
+    <div className="enlaces" aria-label="Escuchar en">
+      <div className="enlaces-fila">
+        <span className="enlaces-titulo">Escuchar en</span>
+        {hay.length ? hay.map((p) => (
+          <button key={p} type="button" className={`plataforma pl-${p}`} title={`Abrir en ${NOMBRE_PLATAFORMA[p]}`} aria-label={`Escuchar en ${NOMBRE_PLATAFORMA[p]}`} onClick={() => void abrir(enlaces[p]!)}>
+            <span className="sigla" aria-hidden>{SIGLA_PLATAFORMA[p]}</span>{NOMBRE_PLATAFORMA[p]}
+          </button>
+        )) : <span className="nota">Sin enlaces</span>}
+      </div>
+      {gestor && editable && !editando && (
+        <div className="enlaces-acciones">
+          <button type="button" className="boton" onClick={empezar}>Editar enlaces</button>
+          <button type="button" className="boton" disabled={buscando} onClick={() => void buscar()}>{buscando ? 'Buscando…' : 'Buscar enlaces'}</button>
+        </div>
+      )}
+      {editando && (
+        <div className="form-edicion enlaces-form">
+          {PLATAFORMAS.map((p) => (
+            <label key={p} className="campo">{NOMBRE_PLATAFORMA[p]}
+              <input value={t[p]} placeholder={EJEMPLO_PLATAFORMA[p]} inputMode="url" spellCheck={false} aria-invalid={!!errorDe(p)} onChange={(e) => setT((x) => ({ ...x, [p]: e.target.value }))} />
+              {errorDe(p) && <span className="error">{errorDe(p)}</span>}
+            </label>
+          ))}
+          <p className="nota">Deja un campo vacío para quitar ese enlace.</p>
+          <div className="botones">
+            <button type="button" className="boton" onClick={() => setEditando(false)}>Cancelar</button>
+            <button type="button" className="boton principal" disabled={invalido || guardando} onClick={() => void guardar()}>{guardando ? 'Guardando…' : 'Guardar enlaces'}</button>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }

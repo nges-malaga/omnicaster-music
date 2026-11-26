@@ -165,10 +165,14 @@ const listas = [
 ]
 const inteligentes = new Map() // listas inteligentes por id (sin «bl-»)
 const medios = new Set() // huellas de imágenes subidas
-const fichaOut = (s) => ({ ...cancionOut(s), energy: 3, mood: 'alegre', themes: 'verano, playa', language: 'es', tags: revision.has(s.id) ? 'revisar' : undefined, ocDisabled: desactivadas.has(s.id) || undefined, ...(extras[s.id] ?? {}) })
+// Enlaces a plataformas por canción (todas empiezan con Spotify y YouTube)
+const ENLACES_INICIALES = { spotify: 'https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC', youtube: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' }
+const enlaces = {}
+const enlacesDe = (id) => (enlaces[id] ??= { ...ENLACES_INICIALES })
+const fichaOut = (s) => ({ ...cancionOut(s), ocLinks: enlacesDe(s.id), energy: 3, mood: 'alegre', themes: 'verano, playa', language: 'es', tags: revision.has(s.id) ? 'revisar' : undefined, ocDisabled: desactivadas.has(s.id) || undefined, ...(extras[s.id] ?? {}) })
 const ROL_MIN = {
   ocEditSongs: 1, ocSetDisabled: 2, ocListSongs: 1, ocHistory: 1, ocUndo: 1, createPlaylist: 1, updatePlaylist: 1, deletePlaylist: 2,
-  ocGetMediaTypes: 1, ocGetSmartLists: 1, ocPreviewSmartList: 2, ocSaveSmartList: 2, ocStopSmartList: 2, ocSetListCover: 1, ocRegenerateSmartCover: 2,
+  ocGetMediaTypes: 1, ocGetSmartLists: 1, ocPreviewSmartList: 2, ocSaveSmartList: 2, ocStopSmartList: 2, ocSetListCover: 1, ocRegenerateSmartCover: 2, ocSetSongLinks: 1, ocFindSongLinks: 1,
 }
 const NIVEL = { listener: 0, operator: 1, admin: 2 }
 
@@ -237,6 +241,24 @@ function manejar(metodo, q, cuerpo = {}) {
     case 'ocSetDisabled': {
       for (const id of cuerpo.ids ?? []) cuerpo.disabled ? desactivadas.add(id) : desactivadas.delete(id)
       return resp({ changed: (cuerpo.ids ?? []).length, unchanged: 0, batch: 'b2' })
+    }
+    case 'ocSetSongLinks': {
+      if (!porId[cuerpo.id]) return fallo(70, 'Canción no encontrada')
+      const actual = { ...enlacesDe(cuerpo.id) }
+      for (const [p, url] of Object.entries(cuerpo.links ?? {})) {
+        if (!url) delete actual[p]
+        else if (p === 'spotify' && !/^https:\/\/open\.spotify\.com\/track\//.test(url)) return fallo(0, 'Enlaces: spotify no es un enlace de Spotify')
+        else actual[p] = url
+      }
+      enlaces[cuerpo.id] = actual
+      return resp({ id: cuerpo.id, changed: 1, links: actual })
+    }
+    case 'ocFindSongLinks': {
+      if (!porId[cuerpo.id]) return fallo(70, 'Canción no encontrada')
+      const actual = enlacesDe(cuerpo.id)
+      const found = actual.tidal ? [] : ['tidal']
+      enlaces[cuerpo.id] = { ...actual, tidal: actual.tidal ?? 'https://tidal.com/browse/track/12345' }
+      return resp({ id: cuerpo.id, found, links: enlaces[cuerpo.id] })
     }
     case 'ocListSongs': return resp({ song: (q.get('filter') === 'disabled' ? [...desactivadas] : [...revision]).map((i) => fichaOut(porId[i])) })
     case 'ocHistory': return resp({ entry: [] })

@@ -2,6 +2,7 @@
 // NO existe ninguna operación que borre canciones: lo máximo es desactivar o mandar a revisión.
 // Los permisos los comprueba el servidor en cada llamada; aquí solo se oculta lo que no se puede usar.
 import { backend } from './backend'
+import { leerEnlaces, type Enlaces } from './enlaces'
 import type { Cancion, Rol } from './types'
 
 export class ErrorOc extends Error {
@@ -35,6 +36,8 @@ export interface Ficha {
   id: string; titulo: string; artista: string; album: string; artistaAlbum: string; anio: string; genero: string; idioma: string
   etiquetas: string[]; tipoMedio: string; energia: number; mood: string; temas: string[]; desactivada: boolean
   duracion: number; formato: string
+  /** Enlaces a plataformas de streaming (ocLinks) */
+  enlaces: Enlaces
 }
 
 export function aFicha(s: any): Ficha {
@@ -43,7 +46,7 @@ export function aFicha(s: any): Ficha {
     id: String(s.id), titulo: s.title ?? '', artista: s.artist ?? '', album: s.album ?? '', artistaAlbum: s.albumArtist ?? '',
     anio: s.year ? String(s.year) : '', genero: s.genre ?? '', idioma: s.language ?? '', etiquetas: lista(s.tags), tipoMedio: s.ocMediaType ?? '',
     energia: Math.max(0, Math.min(5, Math.round(num(s.energy) ?? 0))), mood: s.mood ?? '', temas: lista(s.themes), desactivada: !!s.ocDisabled,
-    duracion: num(s.duration) ?? 0, formato: s.suffix ?? '',
+    duracion: num(s.duration) ?? 0, formato: s.suffix ?? '', enlaces: leerEnlaces(s.ocLinks),
   }
 }
 

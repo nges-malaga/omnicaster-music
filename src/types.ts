@@ -78,6 +78,8 @@ export interface Backend {
   subir(rutas: string[], bloque?: string): Promise<ResultadoSubida>
   /** Sube una imagen (JPG) a la nube por su huella y devuelve la huella. Solo en la aplicación de escritorio. */
   subirImagen(datos: number[]): Promise<string>
+  /** Abre un enlace de plataforma de streaming en el navegador del sistema. */
+  abrirEnlace(url: string): Promise<void>
   onSubida(cb: (p: ProgresoSubida) => void): () => void
   buscarActualizacion(): Promise<{ version: string; instalar: () => Promise<void> } | null>
 }
